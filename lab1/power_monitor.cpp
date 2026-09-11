@@ -12,37 +12,26 @@
 #include <unistd.h>
 #include <libudev.h>
 #include <poll.h>
+#include <cstring>
+#include "battery_data.h"
 
 namespace fs = std::filesystem;
 
 // Глобальные переменные для хранения текущего состояния
 std::string current_status = "Unknown";
-int current_capacity = 0;
+int current_capacity = -1;
 std::mutex data_mutex;
 
 const std::string LOG_FILE = "power.log";
 const size_t MAX_LOG_SIZE = 1024 * 1024; // 1 Мегабайт
 const std::string SOCKET_PATH = "/tmp/power_monitor.sock";
 
-// Функция для чтения значений из псевдофайловой системы sysfs
-std::string read_sysfs(const std::string& path) {
-    std::ifstream file(path);
-    std::string value;
-    if (file.is_open()) {
-        file >> value;
-    }
-    return value;
-}
-
 // Обновление текущих данных о батарее
 void update_battery_data() {
+    const auto data = read_battery_data();
     std::lock_guard<std::mutex> lock(data_mutex);
-    // Читаем текущий уровень заряда и статус (Заряжается / Разряжается)
-    std::string cap_str = read_sysfs("/sys/class/power_supply/BAT0/capacity");
-    if (!cap_str.empty()) current_capacity = std::stoi(cap_str);
-    
-    std::string stat = read_sysfs("/sys/class/power_supply/BAT0/status");
-    if (!stat.empty()) current_status = stat;
+    current_capacity = data.capacity;
+    current_status = data.status;
 }
 
 // Функция для записи лога с поддержкой ротации
@@ -134,8 +123,14 @@ int main() {
     }
 
     struct udev_monitor* mon = udev_monitor_new_from_netlink(udev, "udev");
-    udev_monitor_filter_add_match_subsystem_devtype(mon, "power_supply", NULL);
-    udev_monitor_enable_receiving(mon);
+    if (!mon ||
+        udev_monitor_filter_add_match_subsystem_devtype(mon, "power_supply", NULL) < 0 ||
+        udev_monitor_enable_receiving(mon) < 0) {
+        std::cerr << "Не удалось настроить монитор udev\n";
+        if (mon) udev_monitor_unref(mon);
+        udev_unref(udev);
+        return 1;
+    }
 
     int fd = udev_monitor_get_fd(mon);
     struct pollfd pfd;
@@ -144,14 +139,13 @@ int main() {
 
     // Главный цикл мониторинга
     while (true) {
-        // Ожидаем события от железа
-        int ret = poll(&pfd, 1, -1);
+        // Читаем заряд даже если драйвер не присылает события udev.
+        int ret = poll(&pfd, 1, 2000);
+        update_battery_data();
         if (ret > 0 && (pfd.revents & POLLIN)) {
             struct udev_device* dev = udev_monitor_receive_device(mon);
             if (dev) {
                 // Если произошло событие с батареей или блоком питания
-                update_battery_data();
-                
                 std::string msg = "Событие udev! Текущий заряд: " + std::to_string(current_capacity) + 
                                   "%, Статус: " + current_status;
                 write_log(msg);

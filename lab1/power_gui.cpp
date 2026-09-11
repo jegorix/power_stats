@@ -61,6 +61,7 @@ private:
         batteryBar = new QProgressBar(this);
         batteryBar->setRange(0, 100);
         batteryBar->setValue(0);
+        batteryBar->setFormat("Нет данных");
         batteryBar->setFixedHeight(30);
         mainLayout->addWidget(batteryBar);
 
@@ -106,6 +107,8 @@ private:
         connect(socket, &QLocalSocket::readyRead, this, &PowerGui::read_data);
         
         connect(socket, &QLocalSocket::errorOccurred, this, [this]() {
+            batteryBar->setValue(0);
+            batteryBar->setFormat("Нет данных");
             statusLabel->setText("Ошибка: Нет связи с power_monitor!");
             statusLabel->setStyleSheet("color: #ff5555;"); // Красный текст ошибки
         });
@@ -118,14 +121,23 @@ private:
             QStringList parts = line.split(";");
             
             if (parts.size() == 2) {
-                int capacity = parts[0].toInt();
+                bool valid = false;
+                int capacity = parts[0].toInt(&valid);
                 QString status = parts[1];
+                if (status == "Battery not found") status = "Батарея не обнаружена";
+                else if (status == "Battery data unavailable") status = "Данные батареи недоступны";
 
                 // Обновляем текст
                 statusLabel->setText(QString("Статус: %1").arg(status));
                 statusLabel->setStyleSheet("color: #ffffff;");
                 
                 // Обновляем прогресс бар
+                if (!valid || capacity < 0 || capacity > 100) {
+                    batteryBar->setValue(0);
+                    batteryBar->setFormat("Заряд недоступен");
+                    continue;
+                }
+                batteryBar->setFormat("%p%");
                 batteryBar->setValue(capacity);
 
                 // Динамическое изменение цвета (согласно заданию: зеленая, желтая, красная зона)
