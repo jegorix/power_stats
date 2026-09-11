@@ -30,3 +30,10 @@ target_include_directories(power_monitor PRIVATE ${UDEV_INCLUDE_DIRS})
 add_executable(power_gui power_gui.cpp)
 # Линкуем с графическим и сетевым модулями Qt
 target_link_libraries(power_gui Qt5::Widgets Qt5::Network)
+
+include(CTest)
+if(BUILD_TESTING)
+    add_executable(battery_data_test battery_data_test.cpp)
+    set_target_properties(battery_data_test PROPERTIES AUTOMOC OFF AUTOUIC OFF)
+    add_test(NAME battery_data COMMAND battery_data_test)
+endif()
